@@ -1,0 +1,64 @@
+name: AM Fetch
+
+# Dijalankan dari MotionLyn (web) lewat API GitHub, atau manual: tab Actions > AM Fetch > Run workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      link:
+        description: 'Link bagikan Alight Motion (atau alight.link)'
+        required: true
+        type: string
+      rid:
+        description: 'ID permintaan (diisi otomatis oleh MotionLyn, boleh kosong)'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: amfetch
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Ambil paket Alight Motion (di server GitHub)
+        env:
+          AM_LINK: ${{ inputs.link }}
+          AM_RID: ${{ inputs.rid }}
+        run: node scripts/fetch-am.mjs
+
+      - name: Terbitkan hasil ke branch amcache
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          git config --global user.name "am-server"
+          git config --global user.email "am-server@users.noreply.github.com"
+          REPO_URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          rm -rf cache
+          if git ls-remote --exit-code --heads "$REPO_URL" amcache >/dev/null 2>&1; then
+            git clone -q --depth 1 --branch amcache "$REPO_URL" cache
+          else
+            mkdir cache
+            git -C cache init -q -b amcache
+            git -C cache remote add origin "$REPO_URL"
+          fi
+          mkdir -p cache/r
+          node scripts/prune.mjs cache/r
+          cp -f out/* cache/r/
+          cd cache
+          git checkout -q --orphan tmp
+          git add -A
+          git commit -q -m "am cache $(date -u +%FT%TZ)"
+          git push -q -f origin tmp:amcache
